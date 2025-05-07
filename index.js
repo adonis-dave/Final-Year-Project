@@ -14,47 +14,51 @@ const pool = new Pool({
 
 // Sample NIDA owner lookup function (replace with actual implementation)
 const getNidaOwner = async (nida_number) => {
-  const result = await pool.query(
-    "SELECT name FROM users WHERE nida_number = $1",
-    [nida_number]
-  );
-  return result.rows.length ? result.rows[0].name : "Unknown";
-
-  // if (nida_number === "12345678901234567890") {
-  //   return "David Denis";
-  // } else {
-  //   return "Unknown";
-  // }
+  try {
+    const result = await pool.query(
+      "SELECT name FROM users WHERE nida_number = $1",
+      [nida_number]
+    );
+    return result.rows.length ? result.rows[0].name : null;
+  } catch (error) {
+    console.error("Database error (getNidaOwner):", error);
+    return null;
+  }
 };
 
 // Sample loan application status check (replace with actual implementation)
 const checkLoanApplicationStatus = async (nida_number) => {
-  const result = await pool.query(
-    "SELECT status FROM loans WHERE nida_number = $1",
-    [nida_number]
-  );
-
-  return result.rows.length ? result.rows[0].status : "not_found";
-  // if (nida_number === "12345678901234567890") {
-  //   return "received";
-  // } else {
-  //   return "not_found";
-  // }
+  try {
+    const result = await pool.query(
+      "SELECT status FROM loans WHERE nida_number = $1",
+      [nida_number]
+    );
+    return result.rows.length ? result.rows[0].status : "not_found";
+  } catch (error) {
+    console.error("Database error (checkLoanApplicationStatus):", error);
+    return "Error fetching loan status";
+  }
 };
 
 // Sample debt lookup function (replace with actual implementation)
 const getDebtAmount = async (nida_number) => {
-  const result = await pool.query(
-    "SELECT total_debt FROM debts WHERE nida_number = $1",
-    [nida_number]
-  );
-  return result.rows.length ? result.rows[0].total_debt : "You have no debt.";
+  try {
+    const result = await pool.query(
+      "SELECT total_debt FROM debts WHERE nida_number = $1",
+      [nida_number]
+    );
+    return result.rows.length ? result.rows[0].total_debt : "You have no debt.";
+  } catch (error) {
+    console.error("Database error (getDebtAmount):", error);
+    return "Error fetching debt amount";
+  }
+};
 
-  // if (nida_number === "12345678901234567890") {
-  //   return 100000;
-  // } else {
-  //   return "You have no debt.";
-  // }
+const validateNidaNumber = (nida_number) => {
+  if (!/^\d{20}$/.test(nida_number)) {
+    return false; // Invalid NIDA number
+  }
+  return true; // Valid NIDA number
 };
 
 app.get("/api/test", (req, res) => {
@@ -67,25 +71,31 @@ app.post("/ussd", async (req, res) => {
   const userInputs = text.split("*");
   const nida_number = userInputs[0]; // Keep the first entry as the NIDA number
   const selection = userInputs.length > 1 ? userInputs.slice(1).join("*") : ""; // Handle menu inputs correctly
+  const nida_owner = await getNidaOwner(nida_number);
 
   let response = "";
 
   if (text === "") {
-    response = `CON Welcome to the Mobile OLAMS.
-        Please enter your NIDA number`;
-  } else if (text.length === 20 && !isNaN(text)) {
-    // Validate NIDA number (20 digits)
-    const nida_owner = await getNidaOwner(nida_number);
-
-    response = `CON Hello ${nida_owner}, how do you wish to proceed?
+    response = `CON Welcome to HESLB Mobile OLAMS USSD Service.
+        Please enter your NIDA number to proceed.`;
+  } else if (!validateNidaNumber(nida_number)) {
+    response = `END Invalid NIDA number. 
+    Please enter a valid 20-digit NIDA number.`;
+  } else if (!nida_owner) {
+    response = `END NIDA number "${nida_number}" has not been found in our database.
+      Please verify your details or contact NIDA support.`;
+  } else if (text === nida_number) {
+    response = `CON Hello "${nida_owner}", do you confirm that "${nida_number}" is your Application Number?
+          1. Yes
+          2. No`;
+  } else if (selection === "1") {
+    response = `CON Welcome ${nida_owner}, how do you wish to proceed?
         1. Apply for Loan
         2. Request Loan Application Status
         3. Request Debt amount`;
-  } else if (selection === "1") {
-    response = `CON Apply for Loan
-        Do You consent that ${nida_number} is your Application Number?
-        1. Yes
-        2. No`;
+  } else if (selection === "2") {
+    // If the user does not confirm their NIDA number, prompt them to re-enter
+    response = `END Please re-enter your NIDA number for verification.`;
   } else if (selection === "1*1") {
     response = `CON Yes
         An amount of 40,000 Tsh will be required to access this service. Are you ready to pay?
@@ -93,19 +103,17 @@ app.post("/ussd", async (req, res) => {
         2. Cancel`;
   } else if (selection === "1*1*1") {
     response = `CON Enter your PIN to confirm payment of 40,000 Tsh to HESLB-Mobile OLAMS`;
-  } else if (selection === "1*1*1*your_pin") {
-    // Replace 'your_pin' with actual PIN validation logic
-    response = `END Payment Successful and Application Submitted!!!
-        Please check your Beneficiary Loan Status to approve your submitted application status.
-        Thank you for using our services.`;
-  } else if (selection === "1*2") {
-    response = `END No
-        Please confirm and re-enter your NIDA number for successful Loan Applications.`;
-  } else if (selection === "2") {
-    response = `CON Beneficiary Loan Status
-        Do you consent that ${nida_number} is your Application number?
-        1. Yes
-        2. No`;
+  } else if (selection.startsWith("1*1*1*")) {
+    const enteredPin = selection.split("*")[3];
+    const validPin = "1234";
+    response =
+      enteredPin === validPin
+        ? `END Payment Successful and Application Submitted!!!
+          Please check your Beneficiary Loan Status to approve your submitted application status.`
+        : `END Invalid PIN. Please try again.`;
+  } else if (selection === "1*1*2") {
+    response = `END Cancel
+        Thank you for using for our service. Hope to see you again.`;
   } else if (selection === "2*1") {
     const loan_status = await checkLoanApplicationStatus(nida_number);
     response =
@@ -123,11 +131,6 @@ app.post("/ussd", async (req, res) => {
     // } else if (selection === "2*2") {
     //   response = `END No
     //       Please confirm and re-enter your NIDA number for successful Loan Applications.`;
-  } else if (selection === "3") {
-    response = `CON Request Debt Amount Status:
-        Do you consent that ${nida_number} is your Application number?
-        1. Yes
-        2. No`;
   } else if (selection === "3*1") {
     const total_debt = await getDebtAmount(nida_number); //Use correct NIDA number
     response =
