@@ -26,6 +26,35 @@ const getNidaOwner = async (nida_number) => {
   }
 };
 
+//eligibility check function
+const checkLoanEligibility = async (nida_number) => {
+  try {
+    //check if the applicant has already applied for university or not
+    const eduResult = await pool.query(
+      "SELECT university_applied FROM education_table WHERE nida_number = $1",
+      [nida_number]
+    );
+
+    //check if user has existing debt
+    const debtResult = await pool.query(
+      "SELECT total_debt FROM debts WHERE nida_number = $1",
+      [nida_number]
+    );
+
+    const hasAppliedForUniversity = eduResult.rows.length
+      ? eduResult.rows[0].university_applied
+      : false;
+    const totalDebt = debtResult.rows.length
+      ? debtResult.rows[0].total_debt
+      : 0;
+
+    return { hasAppliedForUniversity, totalDebt };
+  } catch (error) {
+    console.error("Database error (checkLoanEligibility):", error);
+    return null;
+  }
+};
+
 // Sample loan application status check (replace with actual implementation)
 const checkLoanApplicationStatus = async (nida_number) => {
   try {
@@ -72,6 +101,10 @@ app.post("/ussd", async (req, res) => {
   const nida_number = userInputs[0]; // Keep the first entry as the NIDA number
   const selection = userInputs.length > 1 ? userInputs.slice(1).join("*") : ""; // Handle menu inputs correctly
   const nida_owner = await getNidaOwner(nida_number);
+  const { hasAppliedForUniversity, totalDebt } = await checkLoanEligibility(
+    nida_number
+  );
+  const loan_status = await checkLoanApplicationStatus(nida_number);
 
   let response = "";
 
@@ -84,6 +117,12 @@ app.post("/ussd", async (req, res) => {
   } else if (!nida_owner) {
     response = `END NIDA number "${nida_number}" has not been found in our database.
       Please verify your details or contact NIDA support.`;
+  } else if (totalDebt > 0) {
+    response = `END You are not eligible for loan application as you have an outstanding debt.
+    Please clear your debt  of ${totalDebt} Tsh first before applying for a new loan.`;
+  } else if (!hasAppliedForUniversity) {
+    response = `END You are not eligible for loan application as you have not applied to any university yet.
+    Please apply for a university first before applying for a loan.`;
   } else if (text === nida_number) {
     response = `CON Hello "${nida_owner}", do you confirm that "${nida_number}" is your Application Number?
           1. Yes
@@ -114,29 +153,23 @@ app.post("/ussd", async (req, res) => {
   } else if (selection === "1*1*2") {
     response = `END Cancel
         Thank you for using for our service. Hope to see you again.`;
-  } else if (selection === "2*1") {
-    const loan_status = await checkLoanApplicationStatus(nida_number);
-    response =
-      loan_status === "received"
-        ? `END Your Submission for Loan Application has been received successfully!
-        Good luck on your application.`
-        : `END No loan applications have been received from NIDA number "${nida_number}". Submit Loan applications for status verification.`;
-
-    // if (loan_status === "received") {
-    //   response = `END Your Submission for Loan Application have been received successfully!
-    //       Goodluck on your applications.`;
-    // } else {
-    //   response = `END No loan applications have been recieved from this NIDA number "${nida_number}". Submit Loan applications for Status Verification.`;
-    // }
-    // } else if (selection === "2*2") {
-    //   response = `END No
-    //       Please confirm and re-enter your NIDA number for successful Loan Applications.`;
-  } else if (selection === "3*1") {
+  } else if (selection === "1*2") {
+    if (loan_status === "received") {
+      response = `END Your submsission for Loan Application has been received successfully.
+      Goodluck with your application.`;
+    } else if (loan_status === "pending") {
+      response = `END Your loan application is still under review.
+      A SMS notification will be sent to you once your application has been reviewed.`;
+    } else {
+      response = `END No loan application has been received for your NIDA number ${nida_number}.
+      Submit loan applications for Status verification`;
+    }
+  } else if (selection === "1*3") {
     const total_debt = await getDebtAmount(nida_number); //Use correct NIDA number
     response =
       total_debt === "You have no debt."
         ? `END ${total_debt}`
-        : `END Your total debt is ${total_debt} Tsh. Please pay in due time to assist other students.`;
+        : `END Your total debt is ${total_debt} Tsh. Please pay any dates owed in due time to assist other students.`;
   } else {
     response = `END Invalid input. Please try again.`;
   }
