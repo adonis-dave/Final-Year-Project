@@ -1,8 +1,11 @@
 const express = require("express");
 const { Pool } = require("pg");
 const app = express();
+const sendSMS = require("./SMS.js");
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+require("dotenv").config();
 
 const pool = new Pool({
   user: "postgres",
@@ -26,6 +29,19 @@ const getNidaOwner = async (nida_number) => {
   }
 };
 
+//get NIDA user phone number
+const getUserPhoneNumber = async (nida_number) => {
+  try {
+    const result = await pool.query(
+      "SELECT phone_number FROM users WHERE nida_number = $1",
+      [nida_number]
+    );
+    return result.rows.length ? result.rows[0].phone_number : null;
+  } catch (error) {
+    console.error("Database error (getUserPhoneNumber):", error);
+    return null;
+  }
+};
 //eligibility check function
 const checkLoanEligibility = async (nida_number) => {
   try {
@@ -76,7 +92,7 @@ const getDebtAmount = async (nida_number) => {
       "SELECT total_debt FROM debts WHERE nida_number = $1",
       [nida_number]
     );
-    return result.rows.length ? result.rows[0].total_debt : "You have no debt.";
+    return result.rows.length ? result.rows[0].total_debt : null;
   } catch (error) {
     console.error("Database error (getDebtAmount):", error);
     return "Error fetching debt amount";
@@ -94,6 +110,8 @@ app.get("/api/test", (req, res) => {
   res.send("Testing Server");
 });
 
+//USSD logic
+// Handle USSD requests
 app.post("/ussd", async (req, res) => {
   const { sessionId, serviceCode, phoneNumber, text } = req.body;
 
@@ -105,6 +123,7 @@ app.post("/ussd", async (req, res) => {
     nida_number
   );
   const loan_status = await checkLoanApplicationStatus(nida_number);
+  const userPhoneNumber = await getUserPhoneNumber(nida_number);
 
   let response = "";
 
@@ -117,20 +136,20 @@ app.post("/ussd", async (req, res) => {
   } else if (!nida_owner) {
     response = `END NIDA number "${nida_number}" has not been found in our database.
       Please verify your details or contact NIDA support.`;
-  } else if (totalDebt > 0) {
-    response = `END You are not eligible for loan application as you have an outstanding debt.
-    Please clear your debt  of ${totalDebt} Tsh first before applying for a new loan.`;
-  } else if (!hasAppliedForUniversity) {
-    response = `END You are not eligible for loan application as you have not applied to any university yet.
-    Please apply for a university first before applying for a loan.`;
   } else if (text === nida_number) {
     response = `CON Hello "${nida_owner}", do you confirm that "${nida_number}" is your Application Number?
-          1. Yes
-          2. No`;
+      1. Yes
+      2. No`;
+  } else if (totalDebt > 0) {
+    response = `END You are not eligible for loan application as you have an outstanding debt.
+      Please clear your debt  of ${totalDebt} Tsh first before applying for a new loan.`;
+  } else if (!hasAppliedForUniversity) {
+    response = `END You are not eligible for loan application as you have not applied to any university yet.
+      Please apply for a university first before applying for a loan.`;
   } else if (selection === "1") {
     response = `CON Welcome ${nida_owner}, how do you wish to proceed?
-        1. Apply for Loan
-        2. Request Loan Application Status
+      1. Apply for Loan
+      2. Request Loan Application Status
         3. Request Debt amount`;
   } else if (selection === "2") {
     // If the user does not confirm their NIDA number, prompt them to re-enter
@@ -145,11 +164,19 @@ app.post("/ussd", async (req, res) => {
   } else if (selection.startsWith("1*1*1*")) {
     const enteredPin = selection.split("*")[3];
     const validPin = "1234";
-    response =
-      enteredPin === validPin
-        ? `END Payment Successful and Application Submitted!!!
-          Please check your Beneficiary Loan Status to approve your submitted application status.`
-        : `END Invalid PIN. Please try again.`;
+
+    if (enteredPin === validPin) {
+      if (userPhoneNumber) {
+        sendSMS(
+          userPhoneNumber,
+          `Dear ${nida_owner}, you have successfully paid 40,000 Tsh for HESLB Mobile OLAMS service.`
+        );
+      }
+      response = `END Payment successful and Application submitted!
+      Please check your Application status and SMS inbox to approve your submitted application status.`;
+    } else {
+      response = `END Invalid PIN. Please try again.`;
+    }
   } else if (selection === "1*1*2") {
     response = `END Cancel
         Thank you for using for our service. Hope to see you again.`;
@@ -157,19 +184,52 @@ app.post("/ussd", async (req, res) => {
     if (loan_status === "received") {
       response = `END Your submsission for Loan Application has been received successfully.
       Goodluck with your application.`;
+      if (userPhoneNumber) {
+        sendSMS(
+          userPhoneNumber,
+          `Dear ${nida_owner}, your loan application has been received successfully. Good luck with your application.`
+        );
+      }
     } else if (loan_status === "pending") {
       response = `END Your loan application is still under review.
       A SMS notification will be sent to you once your application has been reviewed.`;
+      if (userPhoneNumber) {
+        sendSMS(
+          userPhoneNumber,
+          `Dear ${nida_owner}, your loan application is still under review. A SMS notification will be sent to you once your application has been reviewed.`
+        );
+      }
     } else {
       response = `END No loan application has been received for your NIDA number ${nida_number}.
       Submit loan applications for Status verification`;
+
+      if (userPhoneNumber) {
+        sendSMS(
+          userPhoneNumber,
+          `Dear ${nida_owner}, no loan application has been received for your NIDA number ${nida_number}. Submit loan applications for Status verification`
+        );
+      }
     }
   } else if (selection === "1*3") {
-    const total_debt = await getDebtAmount(nida_number); //Use correct NIDA number
+    const total_debt = await getDebtAmount(nida_number); // Use correct NIDA number
     response =
-      total_debt === "You have no debt."
+      total_debt === null
         ? `END ${total_debt}`
-        : `END Your total debt is ${total_debt} Tsh. Please pay any dates owed in due time to assist other students.`;
+        : `END Your total debt is ${total_debt} Tsh. Please pay any debts owed in due time to assist other students.`;
+
+    if (userPhoneNumber) {
+      if (total_debt === null) {
+        sendSMS(
+          userPhoneNumber,
+          `Dear ${nida_owner}, you currently have no outstanding debt. Thank you for staying up to date with your payments.`
+        );
+      } else {
+        sendSMS(
+          userPhoneNumber,
+          `Dear ${nida_owner}, your total outstanding debt is ${total_debt} Tsh. Please make payments promptly to assist other students.`
+        );
+      }
+    }
   } else {
     response = `END Invalid input. Please try again.`;
   }
