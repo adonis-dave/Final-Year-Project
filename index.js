@@ -99,6 +99,36 @@ const getDebtAmount = async (nida_number) => {
   }
 };
 
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+};
+
+const sendGuarantorOTP = async (nida_number) => {
+  // Fetch guarantor details
+  const guarantorResult = await pool.query(
+    "SELECT guarantor_name, guarantor_phone FROM guarantor_approvals WHERE nida_number = $1",
+    [nida_number]
+  );
+
+  if (!guarantorResult.rows.length) return "Guarantor not found.";
+
+  const guarantor_name = guarantorResult.rows[0].guarantor_name;
+  const guarantor_phone = guarantorResult.rows[0].guarantor_phone;
+  const otp = generateOTP();
+
+  // Store OTP in the guarantor approvals table
+  await pool.query(
+    "INSERT INTO guarantor_approvals (nida_number, guarantor_name, guarantor_phone, otp_code) VALUES ($1, $2, $3, $4) ON CONFLICT (nida_number) DO UPDATE SET otp_code = $4, confirmed = FALSE",
+    [nida_number, guarantor_name, guarantor_phone, otp]
+  );
+
+  // Send SMS with OTP including the guarantor's name
+  sendSMS(
+    guarantor_phone,
+    `Dear ${guarantor_name}, please confirm the loan request for applicant with NIDA Number ${nida_number} using this OTP: ${otp}.`
+  );
+};
+
 const validateNidaNumber = (nida_number) => {
   if (!/^\d{20}$/.test(nida_number)) {
     return false; // Invalid NIDA number
@@ -150,7 +180,8 @@ app.post("/ussd", async (req, res) => {
     response = `CON Welcome ${nida_owner}, how do you wish to proceed?
       1. Apply for Loan
       2. Request Loan Application Status
-        3. Request Debt amount`;
+      3. Request Debt amount
+      4. Confirm Sponsorship`;
   } else if (selection === "2") {
     // If the user does not confirm their NIDA number, prompt them to re-enter
     response = `END Please re-enter your NIDA number for verification.`;
@@ -166,14 +197,15 @@ app.post("/ussd", async (req, res) => {
     const validPin = "1234";
 
     if (enteredPin === validPin) {
-      if (userPhoneNumber) {
-        sendSMS(
-          userPhoneNumber,
-          `Dear ${nida_owner}, you have successfully paid 40,000 Tsh for HESLB Mobile OLAMS service.`
-        );
-      }
-      response = `END Payment successful and Application submitted!
-      Please check your Application status and SMS inbox to approve your submitted application status.`;
+      response = `END Payment Successful and Application Submitted!
+        Your guarantor has been notified and will need to confirm your loan sponsorship.`;
+      // Call function to generate and send OTP to the guarantor
+      await sendGuarantorOTP(nida_number);
+
+      sendSMS(
+        phoneNumber,
+        `Your loan application is now pending. Your guarantor has been sent an OTP for confirmation.`
+      );
     } else {
       response = `END Invalid PIN. Please try again.`;
     }
@@ -229,6 +261,39 @@ app.post("/ussd", async (req, res) => {
           `Dear ${nida_owner}, your total outstanding debt is ${total_debt} Tsh. Please make payments promptly to assist other students.`
         );
       }
+    }
+  } else if (selection === "1*4") {
+    response = `CON Please enter the OTP sent to your registered phone number.`;
+  } else if (selection.startsWith("1*4*")) {
+    const enteredOTP = selection.split("*")[2];
+
+    // Fetch OTP and guarantor details
+    const otpResult = await pool.query(
+      "SELECT guarantor_name, confirmed FROM guarantor_approvals WHERE nida_number = $1 AND otp_code = $2",
+      [nida_number, enteredOTP]
+    );
+
+    if (!otpResult.rows.length) {
+      response = `END Invalid OTP. Please check your SMS and enter the correct code.`;
+    } else {
+      const guarantor_name = otpResult.rows[0].guarantor_name;
+
+      await pool.query(
+        "UPDATE guarantor_approvals SET confirmed = TRUE WHERE nida_number = $1",
+        [nida_number]
+      );
+
+      await pool.query(
+        "UPDATE loans SET status = 'received' WHERE nida_number = $1",
+        [nida_number]
+      );
+
+      response = `END Loan application approved by guarantor ${guarantor_name}. Your loan status is now RECEIVED.`;
+
+      sendSMS(
+        phoneNumber,
+        `Your loan application has been confirmed by ${guarantor_name}.`
+      );
     }
   } else {
     response = `END Invalid input. Please try again.`;
