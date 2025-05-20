@@ -2,6 +2,7 @@ const express = require("express");
 const { Pool } = require("pg");
 const app = express();
 const sendSMS = require("./SMS.js");
+const { sendLoanReport } = require("./loanReport");
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -14,6 +15,8 @@ const pool = new Pool({
   password: "mi vida",
   port: 5432,
 });
+
+const ussdCode = "*384*71188#";
 
 // Sample NIDA owner lookup function (replace with actual implementation)
 const getNidaOwner = async (nida_number) => {
@@ -125,10 +128,12 @@ const sendGuarantorOTP = async (nida_number) => {
   // Send SMS with OTP including the guarantor's name
   sendSMS(
     guarantor_phone,
-    `Dear ${guarantor_name}, please confirm the loan request for applicant with NIDA Number ${nida_number} using this OTP: ${otp}.`
+    `Dear ${guarantor_name}, please confirm the loan request for applicant with NIDA Number ${nida_number} using this OTP: ${otp}.
+    Dial this USSD code ${ussdCode} and select option 4: "Confirm Sponsorship" to approve the loan application.`
   );
 };
 
+//Validation function for NIDA numbers
 const validateNidaNumber = (nida_number) => {
   if (!/^\d{20}$/.test(nida_number)) {
     return false; // Invalid NIDA number
@@ -154,6 +159,8 @@ app.post("/ussd", async (req, res) => {
   );
   const loan_status = await checkLoanApplicationStatus(nida_number);
   const userPhoneNumber = await getUserPhoneNumber(nida_number);
+  const recipientEmail = "emilydean656@gmail.com"; // Replace with the actual email
+    
 
   let response = "";
 
@@ -198,13 +205,13 @@ app.post("/ussd", async (req, res) => {
 
     if (enteredPin === validPin) {
       response = `END Payment Successful and Application Submitted!
-        Your guarantor has been notified and will need to confirm your loan sponsorship.`;
+        Your registered guarantor ${guarantor_name} has been notified and will need to confirm your loan sponsorship.`;
       // Call function to generate and send OTP to the guarantor
       await sendGuarantorOTP(nida_number);
 
       sendSMS(
         phoneNumber,
-        `Your loan application is now pending. Your guarantor has been sent an OTP for confirmation.`
+        `Your loan application is now pending. Your registered ${guarantor_name} guarantor has been sent an OTP for confirmation.`
       );
     } else {
       response = `END Invalid PIN. Please try again.`;
@@ -263,7 +270,8 @@ app.post("/ussd", async (req, res) => {
       }
     }
   } else if (selection === "1*4") {
-    response = `CON Please enter the OTP sent to your registered phone number.`;
+    response = `CON Dear Guarantor "${guarantor_name}",
+    Please enter the OTP sent to your registered phone number.`;
   } else if (selection.startsWith("1*4*")) {
     const enteredOTP = selection.split("*")[2];
 
@@ -274,7 +282,7 @@ app.post("/ussd", async (req, res) => {
     );
 
     if (!otpResult.rows.length) {
-      response = `END Invalid OTP. Please check your SMS and enter the correct code.`;
+      response = `END Invalid OTP. Please check your SMS inbox and enter the correct code.`;
     } else {
       const guarantor_name = otpResult.rows[0].guarantor_name;
 
@@ -288,11 +296,13 @@ app.post("/ussd", async (req, res) => {
         [nida_number]
       );
 
-      response = `END Loan application approved by guarantor ${guarantor_name}. Your loan status is now RECEIVED.`;
+      response = `END Loan application for Applicant ${nida_owner} approved by the registered Guarantor ${guarantor_name}. The loan application status is now RECEIVED.`;
+
+      await sendLoanReport(nida_number, recipientEmail);
 
       sendSMS(
-        phoneNumber,
-        `Your loan application has been confirmed by ${guarantor_name}.`
+        userPhoneNumber,
+        `Your loan application has been confirmed by your registered guarantor ${guarantor_name}.`
       );
     }
   } else {
