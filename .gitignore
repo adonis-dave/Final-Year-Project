@@ -1,1 +1,5 @@
 authtoken.txt
+.env
+nida-db.sql
+populate_loan_report.sql
+trigger_function.sql
