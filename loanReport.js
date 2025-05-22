@@ -24,7 +24,7 @@ const generatePDF = async (reportData) => {
     doc.on("error", (err) => reject(err));
 
     // Add content to the PDF
-    doc.fontSize(16).text("Loan Report", { align: "center" });
+    doc.fontSize(16).text("Loan Application Report", { align: "center" });
     doc.moveDown();
     doc.fontSize(12).text(`NIDA Number: ${reportData.nida_number}`);
     doc.text(`Applicant Name: ${reportData.applicant_name}`);
@@ -87,7 +87,7 @@ const sendLoanReport = async (nida_number, email) => {
     // Send the email with the PDF attachment
     await sendEmailWithPDF(email, pdfData);
 
-    console.log("Loan Application report sent successfully!");
+    console.log("Loan Application Report Email sent successfully!");
   } catch (error) {
     console.error("Error sending loan application report:", error);
   }

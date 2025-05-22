@@ -15,6 +15,7 @@ module.exports = async function sendSMS(number, message) {
       const result = await africastalking.SMS.send({
         to: number,
         message: message,
+        from: 'INFORM',
       });
       console.log(result);
       return; // Exit if successful

@@ -17,6 +17,7 @@ const pool = new Pool({
 });
 
 const ussdCode = "*384*71188#";
+let guarantor_name;
 
 // Sample NIDA owner lookup function (replace with actual implementation)
 const getNidaOwner = async (nida_number) => {
@@ -115,7 +116,7 @@ const sendGuarantorOTP = async (nida_number) => {
 
   if (!guarantorResult.rows.length) return "Guarantor not found.";
 
-  const guarantor_name = guarantorResult.rows[0].guarantor_name;
+  guarantor_name = guarantorResult.rows[0].guarantor_name; // Assign to global variable
   const guarantor_phone = guarantorResult.rows[0].guarantor_phone;
   const otp = generateOTP();
 
@@ -128,8 +129,7 @@ const sendGuarantorOTP = async (nida_number) => {
   // Send SMS with OTP including the guarantor's name
   sendSMS(
     guarantor_phone,
-    `Dear ${guarantor_name}, please confirm the loan request for applicant with NIDA Number ${nida_number} using this OTP: ${otp}.
-    Dial this USSD code ${ussdCode} and select option 4: "Confirm Sponsorship" to approve the loan application.`
+    `Dear ${guarantor_name}, Please confirm the loan request for Loan Applicant with NIDA Number ${nida_number} using this OTP: ${otp}.\n \nDial this USSD code ${ussdCode} and select option 4: "Confirm Sponsorship" to approve the loan application.\n \nDO NOT SHOW THIS CODE TO ANYONE.`
   );
 };
 
@@ -160,7 +160,6 @@ app.post("/ussd", async (req, res) => {
   const loan_status = await checkLoanApplicationStatus(nida_number);
   const userPhoneNumber = await getUserPhoneNumber(nida_number);
   const recipientEmail = "emilydean656@gmail.com"; // Replace with the actual email
-    
 
   let response = "";
 
@@ -205,14 +204,13 @@ app.post("/ussd", async (req, res) => {
 
     if (enteredPin === validPin) {
       response = `END Payment Successful and Application Submitted!
-        Your registered guarantor ${guarantor_name} has been notified and will need to confirm your loan sponsorship.`;
-      // Call function to generate and send OTP to the guarantor
-      await sendGuarantorOTP(nida_number);
+        Your registered guarantor has been notified and will need to confirm your loan sponsorship.`;
 
       sendSMS(
         phoneNumber,
-        `Your loan application is now pending. Your registered ${guarantor_name} guarantor has been sent an OTP for confirmation.`
+        `Your Loan Application is now PENDING.\nYour registered guarantor has been sent an OTP for confirmation. Notify them to check their SMS to approve their sponsorship for your Loan Application.`
       );
+      await sendGuarantorOTP(nida_number);
     } else {
       response = `END Invalid PIN. Please try again.`;
     }
@@ -253,7 +251,7 @@ app.post("/ussd", async (req, res) => {
     const total_debt = await getDebtAmount(nida_number); // Use correct NIDA number
     response =
       total_debt === null
-        ? `END ${total_debt}`
+        ? `END Dear ${nida_owner}, you currently have no outstanding debt. Thank you for staying up to date with your payments.`
         : `END Your total debt is ${total_debt} Tsh. Please pay any debts owed in due time to assist other students.`;
 
     if (userPhoneNumber) {
@@ -270,18 +268,18 @@ app.post("/ussd", async (req, res) => {
       }
     }
   } else if (selection === "1*4") {
-    response = `CON Dear Guarantor "${guarantor_name}",
+    response = `CON Dear Guarantor,
     Please enter the OTP sent to your registered phone number.`;
   } else if (selection.startsWith("1*4*")) {
     const enteredOTP = selection.split("*")[2];
 
-    // Fetch OTP and guarantor details
+    // Fetch OTP details from the database
     const otpResult = await pool.query(
-      "SELECT guarantor_name, confirmed FROM guarantor_approvals WHERE nida_number = $1 AND otp_code = $2",
-      [nida_number, enteredOTP]
+      "SELECT guarantor_name, otp_code FROM guarantor_approvals WHERE nida_number = $1",
+      [nida_number]
     );
 
-    if (!otpResult.rows.length) {
+    if (!otpResult.rows.length || otpResult.rows[0].otp_code !== enteredOTP) {
       response = `END Invalid OTP. Please check your SMS inbox and enter the correct code.`;
     } else {
       const guarantor_name = otpResult.rows[0].guarantor_name;
@@ -294,6 +292,21 @@ app.post("/ussd", async (req, res) => {
       await pool.query(
         "UPDATE loans SET status = 'received' WHERE nida_number = $1",
         [nida_number]
+      );
+
+      const loanResult = await pool.query(
+        "SELECT id FROM loans WHERE nida_number = $1",
+        [nida_number]
+      );
+      const loan_id = loanResult.rows.length ? loanResult.rows[0].id : null;
+
+      await pool.query(
+        `UPDATE loan_reports 
+     SET guarantor_approved = TRUE, 
+         application_date = CURRENT_DATE,
+         loan_id = $2
+     WHERE nida_number = $1`,
+        [nida_number, loan_id]
       );
 
       response = `END Loan application for Applicant ${nida_owner} approved by the registered Guarantor ${guarantor_name}. The loan application status is now RECEIVED.`;
