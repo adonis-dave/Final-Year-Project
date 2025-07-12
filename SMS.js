@@ -2,10 +2,9 @@ const AfricasTalking = require("africastalking");
 require("dotenv").config();
 // Initialize Africa's Talking SDK
 const africastalking = AfricasTalking({
-  // apiKey: process.env.AT_API_KEY,
-  // username: process.env.AT_USERNAME, // Use 'sandbox' for testing
-  apiKey: "atsk_2cdea2d43410db00f890b0acd1760b1be0c792d9ed24d19e5dc5ba9213546082e790bd56",
-  username: "Heslb",
+  apiKey: process.env.AT_API_KEY,
+  username: process.env.AT_USERNAME, // Use 'sandbox' for testing
+
 });
 
 module.exports = async function sendSMS(number, message) {
