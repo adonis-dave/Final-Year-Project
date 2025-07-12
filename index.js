@@ -19,14 +19,28 @@ const pool = new Pool({
 const ussdCode = "*384*71188#";
 let guarantor_name;
 
-// Sample NIDA owner lookup function (replace with actual implementation)
+// Sample NIDA owner lookup function
 const getNidaOwner = async (nida_number) => {
   try {
-    const result = await pool.query(
+    // Check if the NIDA number exists in the users table
+    let result = await pool.query(
       "SELECT name FROM users WHERE nida_number = $1",
       [nida_number]
     );
-    return result.rows.length ? result.rows[0].name : null;
+    if (result.rows.length) {
+      return { name: result.rows[0].name, type: "applicant" };
+    }
+
+    // Check if the NIDA number exists in the guarantor_approvals table
+    result = await pool.query(
+      "SELECT guarantor_name AS name FROM guarantor_approvals WHERE guarantor_nida = $1",
+      [nida_number]
+    );
+    if (result.rows.length) {
+      return { name: result.rows[0].name, type: "guarantor" };
+    }
+
+    return null; // NIDA number not found
   } catch (error) {
     console.error("Database error (getNidaOwner):", error);
     return null;
@@ -108,29 +122,44 @@ const generateOTP = () => {
 };
 
 const sendGuarantorOTP = async (nida_number) => {
-  // Fetch guarantor details
-  const guarantorResult = await pool.query(
-    "SELECT guarantor_name, guarantor_phone FROM guarantor_approvals WHERE nida_number = $1",
-    [nida_number]
-  );
+  try {
+    // Fetch the guarantor's details based on the applicant's NIDA number
+    const guarantorResult = await pool.query(
+      `SELECT g.guarantor_name, g.guarantor_phone 
+       FROM guarantor_approvals g
+       INNER JOIN users u ON g.nida_number = u.nida_number
+       WHERE u.nida_number = $1`,
+      [nida_number]
+    );
 
-  if (!guarantorResult.rows.length) return "Guarantor not found.";
+    if (!guarantorResult.rows.length) {
+      console.error("Guarantor not found for the given applicant.");
+      return "Guarantor not found.";
+    }
 
-  guarantor_name = guarantorResult.rows[0].guarantor_name; // Assign to global variable
-  const guarantor_phone = guarantorResult.rows[0].guarantor_phone;
-  const otp = generateOTP();
+    const guarantor_name = guarantorResult.rows[0].guarantor_name;
+    const guarantor_phone = guarantorResult.rows[0].guarantor_phone;
+    const otp = generateOTP();
 
-  // Store OTP in the guarantor approvals table
-  await pool.query(
-    "INSERT INTO guarantor_approvals (nida_number, guarantor_name, guarantor_phone, otp_code) VALUES ($1, $2, $3, $4) ON CONFLICT (nida_number) DO UPDATE SET otp_code = $4, confirmed = FALSE",
-    [nida_number, guarantor_name, guarantor_phone, otp]
-  );
+    // Store OTP in the guarantor approvals table
+    await pool.query(
+      `UPDATE guarantor_approvals 
+       SET otp_code = $1, confirmed = FALSE 
+       WHERE nida_number = $2`,
+      [otp, nida_number]
+    );
 
-  // Send SMS with OTP including the guarantor's name
-  sendSMS(
-    guarantor_phone,
-    `Dear ${guarantor_name}, Please confirm the loan request for Loan Applicant with NIDA Number ${nida_number} using this OTP: ${otp}.\n \nDial this USSD code ${ussdCode} and select option 4: "Confirm Sponsorship" to approve the loan application.\n \nDO NOT SHOW THIS CODE TO ANYONE.`
-  );
+    // Send SMS with OTP to the guarantor
+    await sendSMS(
+      guarantor_phone,
+      `Dear ${guarantor_name}, Please confirm the loan request for your Loan Applicant using this OTP: ${otp}.\n\nDial this USSD code ${ussdCode} and select option 4: "Confirm Sponsorship" to approve the loan application.\n\nDO NOT SHOW THIS CODE TO ANYONE.`
+    );
+
+    console.log(`OTP sent to guarantor ${guarantor_name} at ${guarantor_phone}`);
+  } catch (error) {
+    console.error("Error in sendGuarantorOTP:", error);
+    throw error;
+  }
 };
 
 //Validation function for NIDA numbers
@@ -173,23 +202,28 @@ app.post("/ussd", async (req, res) => {
     response = `END NIDA number "${nida_number}" has not been found in our database.
       Please verify your details or contact NIDA support.`;
   } else if (text === nida_number) {
-    response = `CON Hello "${nida_owner}", do you confirm that "${nida_number}" is your Application Number?
+    response = `CON Hello "${nida_owner.name}", do you confirm that "${nida_number}" is your NIDA Number?
       1. Yes
       2. No`;
-  } else if (totalDebt > 0) {
-    response = `END You are not eligible for loan application as you have an outstanding debt.
-      Please clear your debt  of ${totalDebt} Tsh first before applying for a new loan.`;
-  } else if (!hasAppliedForUniversity) {
-    response = `END You are not eligible for loan application as you have not applied to any university yet.
-      Please apply for a university first before applying for a loan.`;
   } else if (selection === "1") {
-    response = `CON Welcome ${nida_owner}, how do you wish to proceed?
+    if (nida_owner.type === "applicant") {
+      // Apply eligibility checks only for applicants
+      if (totalDebt > 0) {
+        response = `END You are not eligible for loan application as you have an outstanding debt.
+        Please clear your debt of ${totalDebt} Tsh first before applying for a new loan.`;
+      } else if (!hasAppliedForUniversity) {
+        response = `END You are not eligible for loan application as you have not applied to any university yet.
+        Please apply for a university first before applying for a loan.`;
+      }
+    }
+
+    response = `CON Welcome ${nida_owner.name}, you proceed?
       1. Apply for Loan
       2. Request Loan Application Status
       3. Request Debt amount
       4. Confirm Sponsorship`;
   } else if (selection === "2") {
-    // If the user does not confirm their NIDA number, prompt them to re-enter
+    // User does not confirm their NIDA number
     response = `END Please re-enter your NIDA number for verification.`;
   } else if (selection === "1*1") {
     response = `CON Yes
@@ -206,10 +240,15 @@ app.post("/ussd", async (req, res) => {
       response = `END Payment Successful and Application Submitted!
         Your registered guarantor has been notified and will need to confirm your loan sponsorship.`;
 
+      // Fetch the applicant's phone number from the database
+
+      // Send SMS to the applicant
       sendSMS(
-        phoneNumber,
+        userPhoneNumber,
         `Your Loan Application is now PENDING.\nYour registered guarantor has been sent an OTP for confirmation. Notify them to check their SMS to approve their sponsorship for your Loan Application.`
       );
+
+      // Send OTP to the guarantor
       await sendGuarantorOTP(nida_number);
     } else {
       response = `END Invalid PIN. Please try again.`;
@@ -219,12 +258,12 @@ app.post("/ussd", async (req, res) => {
         Thank you for using for our service. Hope to see you again.`;
   } else if (selection === "1*2") {
     if (loan_status === "received") {
-      response = `END Your submsission for Loan Application has been received successfully.
-      Goodluck with your application.`;
+      response = `END Your submission for Loan Application has been received successfully.
+      Good luck with your application.`;
       if (userPhoneNumber) {
         sendSMS(
           userPhoneNumber,
-          `Dear ${nida_owner}, your loan application has been received successfully. Good luck with your application.`
+          `Dear ${nida_owner.name}, your loan application has been received successfully. Good luck with your application.`
         );
       }
     } else if (loan_status === "pending") {
@@ -233,7 +272,7 @@ app.post("/ussd", async (req, res) => {
       if (userPhoneNumber) {
         sendSMS(
           userPhoneNumber,
-          `Dear ${nida_owner}, your loan application is still under review. A SMS notification will be sent to you once your application has been reviewed.`
+          `Dear ${nida_owner.name}, your loan application is still under review. A SMS notification will be sent to you once your application has been reviewed.`
         );
       }
     } else {
@@ -243,7 +282,7 @@ app.post("/ussd", async (req, res) => {
       if (userPhoneNumber) {
         sendSMS(
           userPhoneNumber,
-          `Dear ${nida_owner}, no loan application has been received for your NIDA number ${nida_number}. Submit loan applications for Status verification`
+          `Dear ${nida_owner.name}, no loan application has been received for your NIDA number ${nida_number}. Submit loan applications for Status verification`
         );
       }
     }
@@ -251,74 +290,88 @@ app.post("/ussd", async (req, res) => {
     const total_debt = await getDebtAmount(nida_number); // Use correct NIDA number
     response =
       total_debt === null
-        ? `END Dear ${nida_owner}, you currently have no outstanding debt. Thank you for staying up to date with your payments.`
+        ? `END Dear ${nida_owner.name}, you currently have no outstanding debt. Thank you for staying up to date with your payments.`
         : `END Your total debt is ${total_debt} Tsh. Please pay any debts owed in due time to assist other students.`;
 
     if (userPhoneNumber) {
       if (total_debt === null) {
         sendSMS(
           userPhoneNumber,
-          `Dear ${nida_owner}, you currently have no outstanding debt. Thank you for staying up to date with your payments.`
+          `Dear ${nida_owner.name}, you currently have no outstanding debt. Thank you for staying up to date with your payments.`
         );
       } else {
         sendSMS(
           userPhoneNumber,
-          `Dear ${nida_owner}, your total outstanding debt is ${total_debt} Tsh. Please make payments promptly to assist other students.`
+          `Dear ${nida_owner.name}, your total outstanding debt is ${total_debt} Tsh. Please make payments promptly to assist other students.`
         );
       }
     }
   } else if (selection === "1*4") {
+    // Guarantor enters OTP
     response = `CON Dear Guarantor,
     Please enter the OTP sent to your registered phone number.`;
   } else if (selection.startsWith("1*4*")) {
     const enteredOTP = selection.split("*")[2];
+    const guarantor_nida = nida_number; // Guarantor logs in using their NIDA number
 
-    // Fetch OTP details from the database
+    // Fetch OTP details from the database using guarantor_nida
     const otpResult = await pool.query(
-      "SELECT guarantor_name, otp_code FROM guarantor_approvals WHERE nida_number = $1",
-      [nida_number]
+      "SELECT otp_code, nida_number FROM guarantor_approvals WHERE guarantor_nida = $1",
+      [guarantor_nida]
     );
 
-    if (!otpResult.rows.length || otpResult.rows[0].otp_code !== enteredOTP) {
+    if (!otpResult.rows.length) {
+      response = `END No OTP found for the provided NIDA number. Please try again.`;
+    } else if (otpResult.rows[0].otp_code !== enteredOTP) {
       response = `END Invalid OTP. Please check your SMS inbox and enter the correct code.`;
     } else {
-      const guarantor_name = otpResult.rows[0].guarantor_name;
+      const applicant_nida = otpResult.rows[0].nida_number;
 
+      // Update guarantor approval status
       await pool.query(
-        "UPDATE guarantor_approvals SET confirmed = TRUE WHERE nida_number = $1",
-        [nida_number]
+        "UPDATE guarantor_approvals SET confirmed = TRUE WHERE guarantor_nida = $1",
+        [guarantor_nida]
       );
 
+      // Update loan status to 'received'
       await pool.query(
         "UPDATE loans SET status = 'received' WHERE nida_number = $1",
-        [nida_number]
+        [applicant_nida]
       );
 
+      // Fetch loan ID for reporting
       const loanResult = await pool.query(
         "SELECT id FROM loans WHERE nida_number = $1",
-        [nida_number]
+        [applicant_nida]
       );
       const loan_id = loanResult.rows.length ? loanResult.rows[0].id : null;
 
+      // Update loan report
       await pool.query(
         `UPDATE loan_reports 
-     SET guarantor_approved = TRUE, 
-         application_date = CURRENT_DATE,
-         loan_id = $2
-     WHERE nida_number = $1`,
-        [nida_number, loan_id]
+       SET guarantor_approved = TRUE, 
+           application_date = CURRENT_DATE,
+           loan_id = $2
+       WHERE nida_number = $1`,
+        [applicant_nida, loan_id]
       );
 
-      response = `END Loan application for Applicant ${nida_owner} approved by the registered Guarantor ${guarantor_name}. The loan application status is now RECEIVED.`;
+      response = `END Loan application for Applicant with NIDA Number ${applicant_nida} has been approved by the registered Guarantor. The loan application status is now RECEIVED.`;
 
-      await sendLoanReport(nida_number, recipientEmail);
+      // Notify the applicant
+      const applicantPhoneNumber = await getUserPhoneNumber(applicant_nida);
+      if (applicantPhoneNumber) {
+        sendSMS(
+          applicantPhoneNumber,
+          `Your loan application has been confirmed by your registered guarantor. Goodluck with your application.`
+        );
+      }
 
-      sendSMS(
-        userPhoneNumber,
-        `Your loan application has been confirmed by your registered guarantor ${guarantor_name}.`
-      );
+      // Send email notification
+      await sendLoanReport(applicant_nida, recipientEmail);
     }
-  } else {
+  }
+  else {
     response = `END Invalid input. Please try again.`;
   }
 

@@ -31,7 +31,7 @@ const generatePDF = async (reportData) => {
     doc.text(`Loan ID: ${reportData.loan_id}`);
     doc.text(`Guarantor NIDA: ${reportData.guarantor_nida}`);
     doc.text(`Guarantor Approved: ${reportData.guarantor_approved}`);
-    doc.text(`Application Date: ${reportData.application_date}`);
+    // doc.text(`Application Date: ${reportData.application_date}`);
     doc.moveDown();
     doc.text("Report Data:");
     doc.text(JSON.stringify(reportData.report_data, null, 2), { width: 500 });
@@ -52,7 +52,7 @@ const sendEmailWithPDF = async (email, pdfData) => {
   const mailOptions = {
     from: process.env.EMAIL_USER,
     to: email,
-    subject: "HESLB Loan Application Report",
+    subject: "HESLB Loan Application Approval Report",
     text: "Please find the attached loan application report.",
     attachments: [
       {
@@ -68,9 +68,12 @@ const sendEmailWithPDF = async (email, pdfData) => {
 
 const sendLoanReport = async (nida_number, email) => {
   try {
-    // Fetch the report data from the database
+    // Fetch the report data from the database, including the guarantor_nida from the guarantor_approvals table
     const result = await pool.query(
-      "SELECT * FROM loan_reports WHERE nida_number = $1",
+      `SELECT lr.*, ga.guarantor_nida 
+       FROM loan_reports lr
+       LEFT JOIN guarantor_approvals ga ON lr.nida_number = ga.nida_number
+       WHERE lr.nida_number = $1`,
       [nida_number]
     );
 
