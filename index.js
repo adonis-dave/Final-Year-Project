@@ -245,7 +245,7 @@ app.post("/ussd", async (req, res) => {
       // Send SMS to the applicant
       sendSMS(
         userPhoneNumber,
-        `Your Loan Application is now PENDING.\nYour registered guarantor has been sent an OTP for confirmation. Notify them to check their SMS to approve their sponsorship for your Loan Application.`
+        ` Your Loan Application is now PENDING.\nYour registered guarantor has been sent an OTP for confirmation. Notify them to check their SMS to approve their sponsorship for your Loan Application. `
       );
 
       // Send OTP to the guarantor
