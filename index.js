@@ -16,7 +16,7 @@ const pool = new Pool({
   port: 5432,
 });
 
-const ussdCode = "*384*71188#";
+const ussdCode = "*149*46*20#";
 let guarantor_name;
 
 // Sample NIDA owner lookup function
