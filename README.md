@@ -34,7 +34,7 @@
 
 # 📖 USSD Loan Application System <a name="about-project"></a>
 
-The **USSD Loan Application System** is a backend application designed to streamline loan applications, approvals, and reporting. It allows users to apply for loans via a USSD interface, enables guarantors to approve applications via OTPs, and generates PDF reports for loan applications.
+The **USSD Loan Application System** is a backend application designed to streamline loan applications, approvals, and reporting. It allows users to apply for loans via a USSD interface, enables guarantors to approve applications via OTPs, and generates PDF reports for loan applications. The system also sends notifications via SMS and email to ensure smooth communication between applicants, guarantors, and administrators.
 
 ## 🛠 Built With <a name="built-with"></a>
 
@@ -71,6 +71,8 @@ The **USSD Loan Application System** is a backend application designed to stream
 - **Guarantor Approval**: Guarantors receive OTPs via SMS to approve loan applications.
 - **Loan Reports**: Automatically generates loan reports and sends them via email as PDF attachments.
 - **SMS Notifications**: Sends SMS notifications to users and guarantors using Africa's Talking API.
+- **Dynamic Guarantor Validation**: The system fetches the guarantor's NIDA number from the `guarantor_approvals` table and validates OTPs for loan approval.
+- **Email Notifications**: Sends detailed loan application reports to administrators or stakeholders via email.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -78,7 +80,7 @@ The **USSD Loan Application System** is a backend application designed to stream
 
 ## 🚀 Live Demo <a name="live-demo"></a>
 
-> This project is not currently deployed.
+> This project is deployed via USSD "*149*46*20#" for Vodacom, Airtel and Tigo lines.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -111,7 +113,7 @@ Clone this repository to your desired folder:
 Install the required dependencies:
 
 ```sh
-  npm install africastalking, ngrok, express, nodemailer, pdfkit, nonodemon, pg
+  npm install africastalking, ngrok, express, nodemailer, pdfkit, nodemon, pg
 ```
 
 ### Usage
@@ -134,17 +136,13 @@ This project is not currently deployed. You can deploy it using services from Af
 
 > Mention all of the collaborators of this project.
 
-👤 **Author1**
+👤 **David Denis**
 
 - GitHub: [@adonis-dave](https://github.com/adonis-dave)
 - Twitter: [@twitterhandle](https://twitter.com/twitterhandle)
 - LinkedIn: [LinkedIn](https://linkedin.com/in/linkedinhandle)
 
-👤 **Author2**
 
-- GitHub: [@githubhandle](https://github.com/githubhandle)
-- Twitter: [@twitterhandle](https://twitter.com/twitterhandle)
-- LinkedIn: [LinkedIn](https://linkedin.com/in/linkedinhandle)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -152,11 +150,7 @@ This project is not currently deployed. You can deploy it using services from Af
 
 ## 🔭 Future Features <a name="future-features"></a>
 
-> Describe 1 - 3 features you will add to the project.
-
-- **Thinking of adding AI in the system**
-- **[new_feature_2]**
-- **[new_feature_3]**
+- **Thinking of adding AI in the system.....**
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -174,7 +168,7 @@ Feel free to check the [issues page](../../issues/).
 
 ## ⭐️ Show your support <a name="support"></a>
 
-> Write a message to encourage readers to support your project
+> A lot of thanks to the Africa's Talking team for their amazing support throught their USSD and SMS APIs. More of the thanks to my University supervisor on his tutorage in finally completing this project.
 
 If you like this project, you can reach out to me in the contacts available on my profile
 
@@ -184,7 +178,7 @@ If you like this project, you can reach out to me in the contacts available on m
 
 ## 🙏 Acknowledgments <a name="acknowledgements"></a>
 
-> Give credit to everyone who inspired your codebase.
+> @AfricasTalking and @Savanna Devs for their spark in making this idea possible, I highly acknowledge you.
 
 I would like to thank Africa's Talking API at large for their great help in this project.
 
